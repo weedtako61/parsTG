@@ -11,6 +11,9 @@ CHANNELS: list[str] = [
     "@rbc_news", "@kommersant", "@vedomosti", "@forbesrussia",
     "@techsparks", "@habr_com", "@vcnews", "@rozetked",
     "@popmech", "@nplusone", "@postnews",
+    # Техника, гаджеты, автомобили и потребительская электроника (добавлено 10 каналов).
+    "@Wylsared", "@evgenmt", "@imehanik", "@khmrchk", "@rozetkedplus",
+    "@technovelly", "@mobiltelefonru", "@kchau", "@lifegoodd1", "@OneBoxTwoBox",
 ]
 
 # Все внутренние даты и имена файлов используют московское время.

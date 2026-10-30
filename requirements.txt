@@ -1,3 +1,4 @@
 telethon>=1.34,<2
 python-dotenv>=1.0,<2
 tzdata>=2024.1
+qrcode>=7.4,<9

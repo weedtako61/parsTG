@@ -388,7 +388,7 @@ async def collect_channel(
             async for message in client.iter_messages(
                 entity,
                 limit=config.MAX_SCAN_PER_CHANNEL,
-                min_id=last_id or None,
+                min_id=last_id,
             ):
                 stats["scanned"] += 1
                 stats["max_scanned_id"] = max(stats["max_scanned_id"], int(message.id or 0))

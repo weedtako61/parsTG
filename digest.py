@@ -803,7 +803,7 @@ async def authorize_user(client: TelegramClient) -> None:
             break
         except asyncio.TimeoutError:
             print("\nQR-код истёк, обновляю…")
-            qr = await client.qr_login()
+            await qr.recreate()
         except SessionPasswordNeededError:
             import getpass
             password = getpass.getpass("Включена двухэтапная аутентификация. Введи пароль 2FA: ")

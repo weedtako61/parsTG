@@ -1,0 +1,21 @@
+# Секреты и авторизационная сессия Telegram
+.env
+*.session
+*.session-journal
+
+# Состояние и кеш локального запуска
+state.json
+channels_cache.json
+state.json.tmp
+channels_cache.json.tmp
+
+# Результаты сбора и логи
+digest_*.json
+output/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

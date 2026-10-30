@@ -388,7 +388,9 @@ async def collect_channel(
             async for message in client.iter_messages(
                 entity,
                 limit=config.MAX_SCAN_PER_CHANNEL,
-                min_id=last_id,
+                # Telethon treats min_id=0 as unset (None) in some versions;
+                # use 1 as the lower bound on a first run because Telegram message IDs are positive.
+                min_id=max(last_id, 1),
             ):
                 stats["scanned"] += 1
                 stats["max_scanned_id"] = max(stats["max_scanned_id"], int(message.id or 0))

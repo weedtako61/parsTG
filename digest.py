@@ -28,6 +28,7 @@ from unicodedata import category as unicode_category
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+import qrcode
 from telethon import TelegramClient, events
 from telethon.errors import (
     ChannelInvalidError,
@@ -771,81 +772,45 @@ def secure_session_file() -> None:
             logger.warning("Не удалось выставить права 600 для сессии: %s", exc)
 
 
-def describe_code_delivery(sent_code: Any) -> str:
-    """Показывает фактический способ доставки, возвращённый Telegram."""
-    code_type = getattr(sent_code, "type", None)
-    next_type = getattr(sent_code, "next_type", None)
-    timeout = getattr(sent_code, "timeout", None)
-
-    labels = {
-        "SentCodeTypeApp": "внутри Telegram на другом авторизованном устройстве",
-        "SentCodeTypeSms": "SMS",
-        "SentCodeTypeCall": "телефонный звонок",
-        "SentCodeTypeFlashCall": "автоматический звонок (нужно определить номер)",
-        "SentCodeTypeMissedCall": "пропущенный звонок",
-        "SentCodeTypeEmailCode": "электронная почта",
-        "SentCodeTypeSetUpEmailRequired": "настройка почты для получения кода",
-        "SentCodeTypeFragmentSms": "SMS через Fragment",
-        "SentCodeTypeFirebaseSms": "SMS через Firebase",
-    }
-    current_name = type(code_type).__name__ if code_type is not None else "неизвестно"
-    next_name = type(next_type).__name__ if next_type is not None else None
-    current = labels.get(current_name, current_name)
-    next_label = labels.get(next_name, next_name) if next_name else None
-
-    print("\\nTelegram принял запрос на вход.")
-    print(f"Способ доставки кода: {current}.")
-    if next_label:
-        print(f"Следующий доступный способ (если Telegram разрешит): {next_label}.")
-    if timeout is not None:
-        print(f"Повторный запрос/смена способа может стать доступна через: {timeout} сек.")
-    if current_name == "SentCodeTypeApp":
-        print("Ищи код в Telegram на другом уже авторизованном устройстве; SMS сейчас не выбран.")
-    elif current_name == "SentCodeTypeSms":
-        print("Проверь SMS именно на SIM-карте этого номера.")
-    elif current_name in {"SentCodeTypeCall", "SentCodeTypeFlashCall", "SentCodeTypeMissedCall"}:
-        print("Ожидай звонок и следуй подсказке Telegram.")
-    else:
-        print("Ориентируйся на указанный способ доставки; принудительно переключить его нельзя.")
+def render_qr(url: str) -> None:
+    """Печатает QR-код входа в терминал."""
+    code = qrcode.QRCode(border=1)
+    code.add_data(url)
+    code.make(fit=True)
+    matrix = code.get_matrix()
+    print("\n".join(
+        "".join("██" if cell else "  " for cell in row)
+        for row in matrix
+    ))
 
 
 async def authorize_user(client: TelegramClient) -> None:
-    """Выполняет вход с явной диагностикой типа кода, возвращённого Telegram."""
+    """Вход через QR-код; повторный запрос SMS не требуется."""
     await client.connect()
     if await client.is_user_authorized():
-        logger.info("Найдена действующая Telegram-сессия; повторный код не нужен.")
+        logger.info("Найдена действующая Telegram-сессия; повторный вход не нужен.")
         return
 
-    phone = input("Введите номер личного Telegram-аккаунта (+...): ").strip()
-    if not phone:
-        raise RuntimeError("Номер телефона не введён.")
+    print("\nАвторизация через QR-код.")
+    print("На телефоне Telegram: Настройки → Устройства → Подключить устройство.")
+    print("Отсканируй QR-код с экрана. Не отправляй его другим людям.\n")
 
-    try:
-        sent_code = await client.send_code_request(phone)
-    except PhoneNumberInvalidError:
-        raise RuntimeError("Telegram отклонил номер телефона. Проверь международный формат +...")
-    except FloodWaitError as exc:
-        raise RuntimeError(
-            f"Telegram временно ограничил запрос кодов. Подожди {exc.seconds} сек. и попробуй позже."
-        ) from exc
+    qr = await client.qr_login()
+    while True:
+        render_qr(qr.url)
+        try:
+            await qr.wait()
+            break
+        except asyncio.TimeoutError:
+            print("\nQR-код истёк, обновляю…")
+            qr = await client.qr_login()
+        except SessionPasswordNeededError:
+            import getpass
+            password = getpass.getpass("Включена двухэтапная аутентификация. Введи пароль 2FA: ")
+            await client.sign_in(password=password)
+            break
 
-    describe_code_delivery(sent_code)
-    code = input("\\nВведи полученный код (не отправляй его никому): ").strip().replace(" ", "")
-    if not code:
-        raise RuntimeError("Код не введён.")
-
-    try:
-        await client.sign_in(phone=phone, code=code, phone_code_hash=sent_code.phone_code_hash)
-    except SessionPasswordNeededError:
-        import getpass
-        password = getpass.getpass("Включена двухэтапная аутентификация. Введи пароль 2FA: ")
-        await client.sign_in(password=password)
-    except PhoneCodeInvalidError as exc:
-        raise RuntimeError("Код неверный. Запроси новый код только после окончания таймера Telegram.") from exc
-    except PhoneCodeExpiredError as exc:
-        raise RuntimeError("Срок действия кода истёк. Запусти программу заново и запроси новый код.") from exc
-
-    logger.info("Вход в личный Telegram-аккаунт выполнен.")
+    logger.info("Вход в личный Telegram-аккаунт выполнен через QR.")
 
 
 async def main() -> None:

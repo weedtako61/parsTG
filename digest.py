@@ -33,6 +33,10 @@ from telethon.errors import (
     ChannelInvalidError,
     ChannelPrivateError,
     FloodWaitError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
@@ -767,8 +771,85 @@ def secure_session_file() -> None:
             logger.warning("Не удалось выставить права 600 для сессии: %s", exc)
 
 
+def describe_code_delivery(sent_code: Any) -> str:
+    """Показывает фактический способ доставки, возвращённый Telegram."""
+    code_type = getattr(sent_code, "type", None)
+    next_type = getattr(sent_code, "next_type", None)
+    timeout = getattr(sent_code, "timeout", None)
+
+    labels = {
+        "SentCodeTypeApp": "внутри Telegram на другом авторизованном устройстве",
+        "SentCodeTypeSms": "SMS",
+        "SentCodeTypeCall": "телефонный звонок",
+        "SentCodeTypeFlashCall": "автоматический звонок (нужно определить номер)",
+        "SentCodeTypeMissedCall": "пропущенный звонок",
+        "SentCodeTypeEmailCode": "электронная почта",
+        "SentCodeTypeSetUpEmailRequired": "настройка почты для получения кода",
+        "SentCodeTypeFragmentSms": "SMS через Fragment",
+        "SentCodeTypeFirebaseSms": "SMS через Firebase",
+    }
+    current_name = type(code_type).__name__ if code_type is not None else "неизвестно"
+    next_name = type(next_type).__name__ if next_type is not None else None
+    current = labels.get(current_name, current_name)
+    next_label = labels.get(next_name, next_name) if next_name else None
+
+    print("\\nTelegram принял запрос на вход.")
+    print(f"Способ доставки кода: {current}.")
+    if next_label:
+        print(f"Следующий доступный способ (если Telegram разрешит): {next_label}.")
+    if timeout is not None:
+        print(f"Повторный запрос/смена способа может стать доступна через: {timeout} сек.")
+    if current_name == "SentCodeTypeApp":
+        print("Ищи код в Telegram на другом уже авторизованном устройстве; SMS сейчас не выбран.")
+    elif current_name == "SentCodeTypeSms":
+        print("Проверь SMS именно на SIM-карте этого номера.")
+    elif current_name in {"SentCodeTypeCall", "SentCodeTypeFlashCall", "SentCodeTypeMissedCall"}:
+        print("Ожидай звонок и следуй подсказке Telegram.")
+    else:
+        print("Ориентируйся на указанный способ доставки; принудительно переключить его нельзя.")
+
+
+async def authorize_user(client: TelegramClient) -> None:
+    """Выполняет вход с явной диагностикой типа кода, возвращённого Telegram."""
+    await client.connect()
+    if await client.is_user_authorized():
+        logger.info("Найдена действующая Telegram-сессия; повторный код не нужен.")
+        return
+
+    phone = input("Введите номер личного Telegram-аккаунта (+...): ").strip()
+    if not phone:
+        raise RuntimeError("Номер телефона не введён.")
+
+    try:
+        sent_code = await client.send_code_request(phone)
+    except PhoneNumberInvalidError:
+        raise RuntimeError("Telegram отклонил номер телефона. Проверь международный формат +...")
+    except FloodWaitError as exc:
+        raise RuntimeError(
+            f"Telegram временно ограничил запрос кодов. Подожди {exc.seconds} сек. и попробуй позже."
+        ) from exc
+
+    describe_code_delivery(sent_code)
+    code = input("\\nВведи полученный код (не отправляй его никому): ").strip().replace(" ", "")
+    if not code:
+        raise RuntimeError("Код не введён.")
+
+    try:
+        await client.sign_in(phone=phone, code=code, phone_code_hash=sent_code.phone_code_hash)
+    except SessionPasswordNeededError:
+        import getpass
+        password = getpass.getpass("Включена двухэтапная аутентификация. Введи пароль 2FA: ")
+        await client.sign_in(password=password)
+    except PhoneCodeInvalidError as exc:
+        raise RuntimeError("Код неверный. Запроси новый код только после окончания таймера Telegram.") from exc
+    except PhoneCodeExpiredError as exc:
+        raise RuntimeError("Срок действия кода истёк. Запусти программу заново и запроси новый код.") from exc
+
+    logger.info("Вход в личный Telegram-аккаунт выполнен.")
+
+
 async def main() -> None:
-    """Авторизуется, регистрирует обработчик и ждёт команды до отключения."""
+    """Авторизуется, показывает способ доставки кода и ждёт команды."""
     setup_logging()
     logger.info("Запуск Telegram Digest.")
     client = TelegramClient(
@@ -779,13 +860,12 @@ async def main() -> None:
         retry_delay=5,
     )
     try:
-        # Первый client.start() запросит телефон, код и пароль 2FA при необходимости.
-        # Авторизуйтесь сначала на своём компьютере; файл .session можно затем
-        # перенести на сервер по защищённому каналу, не раскрывая его третьим лицам.
-        await client.start()
+        # В отличие от client.start(), явный вход позволяет показать,
+        # какой тип доставки кода реально вернул Telegram.
+        await authorize_user(client)
         secure_session_file()
         await register_handlers(client)
-        logger.info("Бот запущен, жду /digest в Избранном.")
+        logger.info("Клиент запущен, жду /digest в Избранном.")
         await client.run_until_disconnected()
     finally:
         if client.is_connected():

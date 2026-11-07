@@ -352,6 +352,8 @@ def window_start(mode: str, now: datetime, last_id: int) -> datetime:
     ceiling = now - timedelta(hours=config.MAX_LOOKBACK_HOURS)
     if mode == "today":
         requested = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif mode == "fivehours":
+        requested = now - timedelta(hours=5)
     elif mode in {"24h", "test"}:
         requested = now - timedelta(hours=24)
     elif last_id:
@@ -556,7 +558,7 @@ async def send_files(
     """Отправляет файлы в Избранное; удаляет каждый локальный файл только после отправки."""
     labels = {
         "default": "/digest", "today": "/digest today",
-        "24h": "/digest 24h", "test": "/digest test",
+        "24h": "/digest 24h", "fivehours": "/Digest5hours", "test": "/digest test",
     }
     errors: list[str] = []
     for index, path in enumerate(paths, start=1):
@@ -590,7 +592,7 @@ def report_text(
         key: sum(item[key] for item in stats)
         for key in ("no_text", "ads", "duplicates", "short", "limit_dropped")
     }
-    names = {"default": "/digest", "today": "/digest today", "24h": "/digest 24h", "test": "/digest test"}
+    names = {"default": "/digest", "today": "/digest today", "24h": "/digest 24h", "fivehours": "/Digest5hours", "test": "/digest test"}
     lines = [
         "📊 ИТОГОВЫЙ ОТЧЁТ TELEGRAM DIGEST", "",
         f"Режим: {names[mode]}",
@@ -632,6 +634,8 @@ def parse_command(text: str) -> str | None:
         return "default"
     if len(parts) != 2:
         return None
+    if len(parts) == 1 and parts[0].casefold() == "/digest5hours":
+        return "fivehours"
     return {"today": "today", "24h": "24h", "test": "test"}.get(parts[1].casefold())
 
 
@@ -689,6 +693,8 @@ async def run_digest(client: TelegramClient, mode: str) -> None:
     ceiling = now - timedelta(hours=config.MAX_LOOKBACK_HOURS)
     if mode == "today":
         start = max(now.replace(hour=0, minute=0, second=0, microsecond=0), ceiling)
+    elif mode == "fivehours":
+        start = max(now - timedelta(hours=5), ceiling)
     elif mode in {"24h", "test"}:
         start = max(now - timedelta(hours=24), ceiling)
     else:
@@ -736,7 +742,7 @@ async def register_handlers(client: TelegramClient) -> None:
     @client.on(events.NewMessage(
         chats="me",
         outgoing=True,
-        pattern=r"^/digest(?:\s+.*)?$",
+        pattern=r"^(?:/digest(?:\s+.*)?|/Digest5hours)$",
     ))
     async def digest_handler(event: Any) -> None:
         if digest_lock.locked():
@@ -751,6 +757,7 @@ async def register_handlers(client: TelegramClient) -> None:
                     "/digest — новые публикации\n"
                     "/digest today — с полуночи МСК\n"
                     "/digest 24h — последние 24 часа\n"
+                    "/Digest5hours — публикации за последние 5 часов\n"
                     "/digest test — первые 3 канала за 24 часа",
                 )
                 return

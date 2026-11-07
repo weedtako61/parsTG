@@ -631,7 +631,7 @@ def parse_command(text: str) -> str | None:
     if not parts or parts[0].casefold() != "/digest":
         return None
     if len(parts) == 1:
-        return "default"
+        return "fivehours" if parts[0].casefold() == "/digest5hours" else "default"
     if len(parts) != 2:
         return None
     if len(parts) == 1 and parts[0].casefold() == "/digest5hours":
